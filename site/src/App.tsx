@@ -419,11 +419,11 @@ export default function App() {
         >
           <input
             type="file"
-            accept="audio/*,.aif,.aiff,.flac"
+            accept="audio/*,.aif,.aiff,.flac,.m4a"
             className="hidden"
             onChange={(e) => e.target.files?.[0] && onFile(e.target.files[0])}
           />
-          {uploadStatus || "Upload track — mp3 · wav · aiff · flac"}
+          {uploadStatus || "Upload track — mp3 · m4a · wav · aiff · flac"}
         </label>
       </div>
     </aside>
