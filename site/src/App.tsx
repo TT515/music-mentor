@@ -430,7 +430,7 @@ export default function App() {
   );
 
   return (
-    <div className="h-screen bg-white text-gray-900 flex overflow-hidden">
+    <div className="h-[100dvh] bg-white text-gray-900 flex overflow-hidden">
       {/* sidebar: static on desktop, drawer on mobile */}
       <div className="hidden md:flex h-full">{sidebar}</div>
       {sidebarOpen && (
@@ -453,7 +453,7 @@ export default function App() {
             {messages.length === 0 && (
               <div className="text-center text-gray-400 text-sm mt-16 space-y-1">
                 <div className="text-2xl">🎛️</div>
-                <div>Upload a track in the sidebar, then ask anything —</div>
+                <div>Add a track with ＋ below, then ask anything —</div>
                 <div className="italic">"why does my chorus feel weak?" · "compare my demo to the reference"</div>
               </div>
             )}
@@ -566,10 +566,22 @@ export default function App() {
           </div>
         </main>
 
-        <footer className="px-4 py-3 border-t border-gray-100">
-          <div className="max-w-2xl mx-auto">
+        <footer className="px-4 py-3 border-t border-gray-100 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+          <div className="max-w-2xl mx-auto flex items-center gap-2">
+            <label
+              className="shrink-0 w-11 h-11 flex items-center justify-center border border-gray-300 rounded-full text-gray-500 text-xl cursor-pointer hover:bg-gray-50 active:bg-gray-100"
+              title="Add a track"
+            >
+              <input
+                type="file"
+                accept="audio/*,.aif,.aiff,.flac,.m4a"
+                className="hidden"
+                onChange={(e) => e.target.files?.[0] && onFile(e.target.files[0])}
+              />
+              ＋
+            </label>
             <input
-              className="w-full bg-white border border-gray-300 rounded-2xl px-4 py-3 text-[15px] placeholder:text-gray-400 focus:border-gray-500 outline-none shadow-sm"
+              className="flex-1 bg-white border border-gray-300 rounded-2xl px-4 py-3 text-[16px] placeholder:text-gray-400 focus:border-gray-500 outline-none shadow-sm"
               placeholder={
                 askUser
                   ? "Answer above first…"
@@ -583,6 +595,7 @@ export default function App() {
               onKeyDown={(e) => e.key === "Enter" && input.trim() && send(input.trim(), [])}
             />
           </div>
+          {uploadStatus && <div className="max-w-2xl mx-auto text-xs text-blue-600 mt-1 px-1">{uploadStatus}</div>}
         </footer>
       </div>
     </div>
