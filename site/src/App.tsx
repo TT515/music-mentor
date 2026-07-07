@@ -7,7 +7,8 @@ type ContentBlock =
   | { type: "tool_result"; tool_use_id: string; content: string };
 type Msg = { role: "user" | "assistant"; content: string | ContentBlock[] };
 
-type Track = { upload_id: string; filename: string; url: string };
+type Track = { upload_id: string; filename: string; url?: string };
+type Session = { id: string; title: string; createdAt: number; messages: Msg[]; tracks: Track[] };
 
 type AskUser = {
   toolUseId: string;
@@ -20,16 +21,17 @@ type AskUser = {
 };
 
 const WORKER = import.meta.env.VITE_MODAL_BASE_URL as string;
+const STORE_KEY = "mm_sessions_v1";
 
 const TOOL_LABELS: Record<string, { label: string; eta: string }> = {
   quick_features: { label: "Measuring tempo, key & loudness", eta: "~20 s" },
   analyze_structure: { label: "Mapping song structure", eta: "1–3 min" },
-  separate_stems: { label: "Splitting into stems (vocals / drums / bass / other)", eta: "1–2 min" },
-  section_features: { label: "Measuring each section", eta: "~30 s" },
+  separate_stems: { label: "Splitting into stems", eta: "1–2 min" },
+  section_features: { label: "Measuring sections", eta: "~30 s" },
   get_job: { label: "Collecting results", eta: "" },
 };
 
-// --- tiny markdown-lite renderer (bold, italics, code, headers, lists) ---
+// --- tiny markdown-lite renderer ---
 function md(text: string) {
   const esc = (s: string) =>
     s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -37,12 +39,12 @@ function md(text: string) {
     esc(s)
       .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
       .replace(/\*(.+?)\*/g, "<em>$1</em>")
-      .replace(/`(.+?)`/g, '<code class="bg-black/10 rounded px-1">$1</code>');
+      .replace(/`(.+?)`/g, '<code class="bg-gray-100 rounded px-1">$1</code>');
   const lines = text.split("\n");
   let html = "", inList = false, inTable = false;
   for (const ln of lines) {
     if (ln.trim().startsWith("|")) {
-      if (!inTable) { html += '<div class="font-mono text-xs overflow-x-auto whitespace-pre my-2">'; inTable = true; }
+      if (!inTable) { html += '<div class="font-mono text-xs overflow-x-auto whitespace-pre my-2 text-gray-700">'; inTable = true; }
       html += esc(ln) + "\n";
       continue;
     } else if (inTable) { html += "</div>"; inTable = false; }
@@ -72,12 +74,32 @@ function Elapsed({ since }: { since: number }) {
   return <span>{Math.floor(s / 60)}:{String(s % 60).padStart(2, "0")}</span>;
 }
 
+function loadSessions(): Session[] {
+  try {
+    const raw = localStorage.getItem(STORE_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch { /* corrupted store — start fresh */ }
+  return [];
+}
+
+const newSession = (): Session => ({
+  id: Math.random().toString(36).slice(2, 10),
+  title: "New chat",
+  createdAt: Date.now(),
+  messages: [],
+  tracks: [],
+});
+
 export default function App() {
-  const [messages, setMessages] = useState<Msg[]>([]);
-  const [tracks, setTracks] = useState<Track[]>([]);
+  const [sessions, setSessions] = useState<Session[]>(() => {
+    const s = loadSessions();
+    return s.length > 0 ? s : [newSession()];
+  });
+  const [activeId, setActiveId] = useState<string>(() => sessions[0]?.id);
+  const [messages, setMessages] = useState<Msg[]>(() => sessions[0]?.messages || []);
+  const [tracks, setTracks] = useState<Track[]>(() => sessions[0]?.tracks || []);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
-  const [status, setStatus] = useState("");
   const [uploadStatus, setUploadStatus] = useState("");
   const [dragging, setDragging] = useState(false);
   const [error, setError] = useState("");
@@ -85,6 +107,7 @@ export default function App() {
   const [answers, setAnswers] = useState<Record<number, { picks: Set<string>; other: string }>>({});
   const [runningJobs, setRunningJobs] = useState<Record<string, { kind: string; since: number }>>({});
   const [queuedNotices, setQueuedNotices] = useState<string[]>([]);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const pollTimers = useRef<Record<string, ReturnType<typeof setInterval>>>({});
   const bottomRef = useRef<HTMLDivElement>(null);
   const messagesRef = useRef<Msg[]>([]);
@@ -92,8 +115,81 @@ export default function App() {
   const tracksRef = useRef<Track[]>([]);
   tracksRef.current = tracks;
 
-  // flush queued job notifications only when the conversation is free:
-  // never interrupt a pending intent question or an in-flight request
+  // ---------- session persistence ----------
+  useEffect(() => {
+    setSessions((prev) => {
+      const next = prev.map((s) =>
+        s.id === activeId
+          ? {
+              ...s,
+              messages,
+              tracks: tracks.map(({ upload_id, filename }) => ({ upload_id, filename })),
+              title:
+                s.title === "New chat"
+                  ? (() => {
+                      const firstText = messages.find((m) => typeof m.content === "string" && !(m.content as string).startsWith("[system]"));
+                      if (firstText) return (firstText.content as string).slice(0, 40);
+                      if (tracks[0]) return tracks[0].filename.slice(0, 40);
+                      return "New chat";
+                    })()
+                  : s.title,
+            }
+          : s
+      );
+      try { localStorage.setItem(STORE_KEY, JSON.stringify(next)); } catch { /* quota */ }
+      return next;
+    });
+  }, [messages, tracks, activeId]);
+
+  function clearTransient() {
+    Object.values(pollTimers.current).forEach(clearInterval);
+    pollTimers.current = {};
+    setRunningJobs({});
+    setQueuedNotices([]);
+    setAskUser(null);
+    setAnswers({});
+    setError("");
+    setInput("");
+  }
+
+  function switchSession(id: string) {
+    if (id === activeId) return;
+    clearTransient();
+    const s = sessions.find((x) => x.id === id);
+    if (!s) return;
+    setActiveId(id);
+    setMessages(s.messages);
+    setTracks(s.tracks);
+    setSidebarOpen(false);
+  }
+
+  function createSession() {
+    clearTransient();
+    const s = newSession();
+    setSessions((prev) => [s, ...prev]);
+    setActiveId(s.id);
+    setMessages([]);
+    setTracks([]);
+    setSidebarOpen(false);
+  }
+
+  function deleteSession(id: string) {
+    setSessions((prev) => {
+      const next = prev.filter((s) => s.id !== id);
+      try { localStorage.setItem(STORE_KEY, JSON.stringify(next)); } catch { /* quota */ }
+      if (id === activeId) {
+        const fallback = next[0] || newSession();
+        if (next.length === 0) next.push(fallback);
+        clearTransient();
+        setActiveId(fallback.id);
+        setMessages(fallback.messages);
+        setTracks(fallback.tracks);
+      }
+      return next;
+    });
+  }
+
+  // flush queued job notifications only when the conversation is free
   useEffect(() => {
     if (queuedNotices.length > 0 && !busy && !askUser) {
       const batch = queuedNotices.join("\n");
@@ -103,7 +199,7 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [queuedNotices, busy, askUser]);
 
-  // accept file drops anywhere on the page; block browser default navigation
+  // accept file drops anywhere; block browser default navigation
   useEffect(() => {
     const over = (e: DragEvent) => { e.preventDefault(); };
     const drop = (e: DragEvent) => {
@@ -117,18 +213,16 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, busy, askUser, tracks]);
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, busy, askUser]);
 
-  // ---------- upload (no auto-analysis: the mentor waits for a question) ----------
+  // ---------- upload (silent: the mentor waits for a question) ----------
   async function onFile(f: File) {
     setError("");
     if (!/\.(wav|mp3|aif|aiff|flac|m4a|ogg)$/i.test(f.name)) {
-      setError(`"${f.name}" doesn't look like audio (wav/mp3/aiff/flac/m4a/ogg).`);
+      setError(`"${f.name}" isn't a supported format (mp3, wav, aiff, flac, m4a, ogg).`);
       return;
     }
     const mb = f.size / 1e6;
-    if (mb > 20)
-      setUploadStatus(`Heads up: ${mb.toFixed(0)} MB is big — an mp3 uploads ~15x faster and analyzes just as well.`);
     try {
       const fd = new FormData();
       fd.append("file", f);
@@ -138,11 +232,7 @@ export default function App() {
         xhr.upload.onprogress = (ev) => {
           if (ev.lengthComputable) {
             const pct = Math.round((ev.loaded / ev.total) * 100);
-            setUploadStatus(
-              pct < 100
-                ? `Uploading ${f.name} — ${pct}% of ${mb.toFixed(1)} MB`
-                : `Upload complete — registering with the analysis server…`
-            );
+            setUploadStatus(pct < 100 ? `Uploading ${f.name} — ${pct}%` : "Almost done…");
           }
         };
         xhr.onload = () => {
@@ -158,7 +248,7 @@ export default function App() {
       setUploadStatus("");
     } catch (e: any) {
       setUploadStatus("");
-      setError(`Upload problem: ${e.message}. The analysis server may be waking up — try once more.`);
+      setError(`Upload failed: ${e.message}. Try again in a moment.`);
     }
   }
 
@@ -203,7 +293,6 @@ export default function App() {
     const outbound = [...messagesRef.current, userMsg];
     setMessages(outbound);
     setInput("");
-    setStatus("The mentor is thinking…");
     try {
       const r = await fetch("/api/chat", {
         method: "POST",
@@ -229,7 +318,6 @@ export default function App() {
       setError(e.message);
     } finally {
       setBusy(false);
-      setStatus("");
     }
   }
 
@@ -261,203 +349,241 @@ export default function App() {
     await send("", [block]);
   }
 
-  const hasChat = messages.length > 0;
-  const showHero = tracks.length === 0 && !hasChat;
+  function findAnswers(toolUseId: string): { question: string; answer: string }[] | null {
+    for (const m of messages) {
+      if (m.role !== "user" || typeof m.content === "string") continue;
+      for (const b of m.content) {
+        if (b.type === "tool_result" && b.tool_use_id === toolUseId) {
+          try { return JSON.parse(b.content); } catch { return null; }
+        }
+      }
+    }
+    return null;
+  }
 
   // ---------- render ----------
-  return (
-    <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-slate-100">
-      <div className="max-w-3xl mx-auto px-4 py-6 flex flex-col gap-4 min-h-screen">
-        <header className="flex items-center justify-between">
-          <div className="flex items-baseline gap-3">
-            <h1 className="text-2xl font-bold tracking-tight">🎛️ Music Mentor</h1>
-            <span className="text-sm text-slate-400 hidden sm:inline">measure → ask intent → advise</span>
+  const sidebar = (
+    <aside className="w-64 shrink-0 border-r border-gray-200 bg-gray-50 flex flex-col h-full">
+      <div className="p-3">
+        <button
+          onClick={createSession}
+          className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm font-medium hover:bg-white text-left"
+        >
+          ＋ New chat
+        </button>
+      </div>
+
+      <div className="px-3 pb-1 text-[11px] font-semibold uppercase tracking-wide text-gray-400">Chats</div>
+      <div className="flex-1 overflow-y-auto px-2 flex flex-col gap-0.5">
+        {sessions.map((s) => (
+          <div
+            key={s.id}
+            onClick={() => switchSession(s.id)}
+            className={`group flex items-center rounded-lg px-2 py-1.5 text-sm cursor-pointer ${
+              s.id === activeId ? "bg-gray-200/80 font-medium" : "hover:bg-gray-100 text-gray-600"
+            }`}
+          >
+            <span className="truncate flex-1">{s.title}</span>
+            <button
+              onClick={(e) => { e.stopPropagation(); deleteSession(s.id); }}
+              className="opacity-0 group-hover:opacity-60 hover:!opacity-100 text-xs px-1"
+              title="Delete chat"
+            >
+              ✕
+            </button>
           </div>
-          {tracks.length > 0 && (
-            <span className="text-xs bg-slate-800 rounded-full px-3 py-1">🎵 {tracks.length} track{tracks.length > 1 ? "s" : ""}</span>
-          )}
+        ))}
+      </div>
+
+      <div className="border-t border-gray-200 p-3 flex flex-col gap-2">
+        <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">Tracks in this chat</div>
+        {tracks.length === 0 && <div className="text-xs text-gray-400">No tracks yet</div>}
+        {tracks.map((t) => (
+          <div key={t.upload_id} className="flex flex-col gap-1 bg-white border border-gray-200 rounded-lg px-2 py-1.5">
+            <span className="text-xs truncate" title={t.filename}>{t.filename}</span>
+            {t.url && <audio controls src={t.url} className="w-full h-7" />}
+          </div>
+        ))}
+        <label
+          onDragEnter={() => setDragging(true)}
+          onDragLeave={() => setDragging(false)}
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={(e) => {
+            e.preventDefault(); setDragging(false);
+            const f = e.dataTransfer.files?.[0];
+            if (f) void onFile(f);
+          }}
+          className={`border border-dashed rounded-lg px-2 py-2 text-center text-xs cursor-pointer transition ${
+            dragging ? "border-blue-500 bg-blue-50 text-blue-600" : "border-gray-300 text-gray-500 hover:border-gray-400 hover:bg-white"
+          }`}
+        >
+          <input
+            type="file"
+            accept="audio/*,.aif,.aiff,.flac"
+            className="hidden"
+            onChange={(e) => e.target.files?.[0] && onFile(e.target.files[0])}
+          />
+          {uploadStatus || "Upload track — mp3 · wav · aiff · flac"}
+        </label>
+      </div>
+    </aside>
+  );
+
+  return (
+    <div className="h-screen bg-white text-gray-900 flex overflow-hidden">
+      {/* sidebar: static on desktop, drawer on mobile */}
+      <div className="hidden md:flex h-full">{sidebar}</div>
+      {sidebarOpen && (
+        <div className="md:hidden fixed inset-0 z-20 flex">
+          <div className="h-full">{sidebar}</div>
+          <div className="flex-1 bg-black/30" onClick={() => setSidebarOpen(false)} />
+        </div>
+      )}
+
+      {/* main column */}
+      <div className="flex-1 flex flex-col h-full">
+        <header className="flex items-center gap-3 px-4 py-3 border-b border-gray-100">
+          <button className="md:hidden text-gray-500" onClick={() => setSidebarOpen(true)}>☰</button>
+          <h1 className="text-base font-semibold tracking-tight">Music Mentor</h1>
+          <span className="text-xs text-gray-400 hidden sm:inline">measure → ask intent → advise</span>
         </header>
 
-        {/* landing hero */}
-        {showHero && (
-          <div className="flex-1 flex flex-col justify-center gap-6">
-            <div className="text-center space-y-2">
-              <div className="text-4xl">🔥</div>
-              <h2 className="text-xl font-semibold">Production feedback that starts by listening — then asks what you meant.</h2>
-              <p className="text-slate-400 max-w-lg mx-auto text-sm">
-                Drop in as many tracks as you like — demos, revisions, references — then ask
-                anything. The mentor measures what it needs (tempo, key, structure, stems,
-                per-section energy), asks about your <em>intent</em>, and answers with specific,
-                traceable advice.
-              </p>
-            </div>
-            <label
-              onDragEnter={() => setDragging(true)}
-              onDragLeave={() => setDragging(false)}
-              onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
-              onDrop={(e) => {
-                e.preventDefault();
-                setDragging(false);
-                const f = e.dataTransfer.files?.[0];
-                if (f) void onFile(f);
-              }}
-              className={`border-2 border-dashed rounded-2xl p-12 text-center cursor-pointer transition
-                ${dragging ? "border-amber-400 bg-amber-400/10 scale-[1.01]" : "border-slate-700 hover:border-slate-500 hover:bg-white/5"}`}
-            >
-              <input
-                type="file"
-                accept="audio/*,.aif,.aiff,.flac"
-                className="hidden"
-                onChange={(e) => e.target.files?.[0] && onFile(e.target.files[0])}
-              />
-              <div className="text-lg font-medium">{uploadStatus || "Drop your first track here"}</div>
-              <div className="text-sm text-slate-400 mt-1">or click to browse — mp3 / m4a upload fastest; wav & aiff work but are 10–15× larger</div>
-            </label>
-            <div className="grid grid-cols-3 gap-3 text-center text-xs text-slate-400">
-              <div className="bg-white/5 rounded-xl p-3"><div className="text-base mb-1">📐</div>Real measurements, not vibes — every claim has a number</div>
-              <div className="bg-white/5 rounded-xl p-3"><div className="text-base mb-1">🎯</div>It asks what each section is <em>supposed</em> to do before judging it</div>
-              <div className="bg-white/5 rounded-xl p-3"><div className="text-base mb-1">🎚️</div>Compare demos against references — yours vs. the sound you're chasing</div>
-            </div>
-          </div>
-        )}
-
-        {/* track shelf */}
-        {tracks.length > 0 && (
-          <div className="flex flex-col gap-2">
-            {tracks.map((t) => (
-              <div key={t.upload_id} className="flex items-center gap-3 bg-white/5 rounded-xl px-3 py-2">
-                <span className="text-xs truncate flex-1" title={t.filename}>🎵 {t.filename}</span>
-                <audio controls src={t.url} className="h-8 max-w-[55%]" />
+        <main className="flex-1 overflow-y-auto px-4 py-4">
+          <div className="max-w-2xl mx-auto flex flex-col gap-3">
+            {messages.length === 0 && (
+              <div className="text-center text-gray-400 text-sm mt-16 space-y-1">
+                <div className="text-2xl">🎛️</div>
+                <div>Upload a track in the sidebar, then ask anything —</div>
+                <div className="italic">"why does my chorus feel weak?" · "compare my demo to the reference"</div>
               </div>
-            ))}
-            <label className="text-xs text-slate-400 hover:text-slate-200 cursor-pointer self-start px-1">
-              <input
-                type="file"
-                accept="audio/*,.aif,.aiff,.flac"
-                className="hidden"
-                onChange={(e) => e.target.files?.[0] && onFile(e.target.files[0])}
-              />
-              ＋ add another track (or drop it anywhere)
-            </label>
-            {uploadStatus && <div className="text-xs text-amber-300">{uploadStatus}</div>}
-          </div>
-        )}
+            )}
 
-        {/* chat */}
-        <main className="flex-1 flex flex-col gap-3">
-          {messages.map((m, i) => {
-            if (typeof m.content === "string") {
-              if (m.content.startsWith("[system]")) return null;
-              return (
-                <div key={i} className="self-end bg-blue-600 rounded-2xl rounded-br-sm px-4 py-2 max-w-[85%] text-sm">
-                  {m.content}
-                </div>
-              );
-            }
-            return m.content.map((b, k) => {
-              if (b.type === "text")
+            {messages.map((m, i) => {
+              if (typeof m.content === "string") {
+                if (m.content.startsWith("[system]")) return null;
                 return (
-                  <div key={`${i}-${k}`} className="self-start bg-white/10 rounded-2xl rounded-bl-sm px-4 py-3 max-w-[92%] text-sm leading-relaxed"
-                    dangerouslySetInnerHTML={{ __html: md(b.text) }} />
-                );
-              if (b.type === "tool_use" && b.name !== "ask_user") {
-                const t = TOOL_LABELS[b.name] || { label: b.name, eta: "" };
-                return (
-                  <div key={`${i}-${k}`} className="self-start flex items-center gap-2 text-xs text-slate-400 pl-2">
-                    <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                    {t.label}{t.eta && <span className="opacity-60">· {t.eta}</span>}
+                  <div key={i} className="self-end bg-gray-100 rounded-2xl rounded-br-md px-4 py-2 max-w-[85%] text-[15px]">
+                    {m.content}
                   </div>
                 );
               }
-              return null;
-            });
-          })}
+              return m.content.map((b, k) => {
+                if (b.type === "text")
+                  return (
+                    <div key={`${i}-${k}`} className="self-start max-w-[95%] text-[15px] leading-relaxed px-1"
+                      dangerouslySetInnerHTML={{ __html: md(b.text) }} />
+                  );
+                if (b.type === "tool_use" && b.name !== "ask_user") {
+                  const t = TOOL_LABELS[b.name] || { label: b.name, eta: "" };
+                  return (
+                    <div key={`${i}-${k}`} className="self-start flex items-center gap-2 text-xs text-gray-400 px-1">
+                      <span className="inline-block w-1.5 h-1.5 rounded-full bg-green-500" />
+                      {t.label}{t.eta && <span className="opacity-70"> · {t.eta}</span>}
+                    </div>
+                  );
+                }
+                if (b.type === "tool_use" && b.name === "ask_user") {
+                  const ans = findAnswers(b.id);
+                  if (!ans) return null;
+                  return (
+                    <div key={`${i}-${k}`} className="self-start w-full max-w-[95%] border border-gray-200 rounded-2xl p-4 bg-gray-50 flex flex-col gap-3">
+                      {ans.map((qa, qi) => (
+                        <div key={qi}>
+                          <div className="text-sm text-gray-600">{qa.question}</div>
+                          <div className="text-sm font-medium mt-0.5 text-blue-700">{qa.answer}</div>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                }
+                return null;
+              });
+            })}
 
-          {Object.entries(runningJobs).map(([id, j]) => (
-            <div key={id} className="self-start flex items-center gap-2 text-xs bg-amber-400/10 text-amber-300 rounded-full px-3 py-1.5">
-              <span className="inline-block w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
-              Deep analysis running (<Elapsed since={j.since} /> elapsed) — keep chatting; I'll pick it up when it finishes
-            </div>
-          ))}
+            {Object.entries(runningJobs).map(([id, j]) => (
+              <div key={id} className="self-start flex items-center gap-2 text-xs bg-blue-50 text-blue-700 rounded-full px-3 py-1.5">
+                <span className="inline-block w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
+                Analyzing (<Elapsed since={j.since} />) — keep chatting, results arrive automatically
+              </div>
+            ))}
 
-          {askUser && (
-            <div className="border border-amber-400/40 rounded-2xl p-4 flex flex-col gap-4 bg-amber-400/5">
-              <div className="text-xs uppercase tracking-widest text-amber-300 font-semibold">The mentor wants to understand your intent</div>
-              {askUser.questions.map((q, qi) => (
-                <div key={qi}>
-                  <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{q.header}</div>
-                  <div className="font-medium mb-2 text-sm">{q.question}</div>
-                  <div className="flex flex-col gap-2">
-                    {q.options.map((o) => (
-                      <button
-                        key={o.label}
-                        onClick={() => toggle(qi, o.label, !!q.multiSelect)}
-                        className={`text-left border rounded-xl px-3 py-2 transition ${
-                          answers[qi]?.picks.has(o.label)
-                            ? "border-amber-400 bg-amber-400/10"
-                            : "border-slate-700 hover:border-slate-500 hover:bg-white/5"
-                        }`}
-                      >
-                        <div className="font-medium text-sm">{o.label}</div>
-                        <div className="text-xs text-slate-400">{o.description}</div>
-                      </button>
-                    ))}
-                    <input
-                      placeholder="Something else…"
-                      className="bg-transparent border border-slate-700 rounded-xl px-3 py-2 text-sm placeholder:text-slate-500 focus:border-amber-400 outline-none"
-                      value={answers[qi]?.other || ""}
-                      onChange={(e) =>
-                        setAnswers((p) => ({
-                          ...p,
-                          [qi]: { picks: p[qi]?.picks || new Set<string>(), other: e.target.value },
-                        }))
-                      }
-                    />
+            {askUser && (
+              <div className="border border-blue-200 rounded-2xl p-4 flex flex-col gap-4 bg-blue-50/50 w-full max-w-[95%]">
+                {askUser.questions.map((q, qi) => (
+                  <div key={qi}>
+                    <div className="font-medium mb-2 text-sm">{q.question}</div>
+                    <div className="flex flex-col gap-2">
+                      {q.options.map((o) => (
+                        <button
+                          key={o.label}
+                          onClick={() => toggle(qi, o.label, !!q.multiSelect)}
+                          className={`text-left border rounded-xl px-3 py-2 transition bg-white ${
+                            answers[qi]?.picks.has(o.label)
+                              ? "border-blue-500 ring-1 ring-blue-500"
+                              : "border-gray-200 hover:border-gray-300"
+                          }`}
+                        >
+                          <div className="font-medium text-sm">{o.label}</div>
+                          <div className="text-xs text-gray-500">{o.description}</div>
+                        </button>
+                      ))}
+                      <input
+                        placeholder="Something else…"
+                        className="bg-white border border-gray-200 rounded-xl px-3 py-2 text-sm placeholder:text-gray-400 focus:border-blue-400 outline-none"
+                        value={answers[qi]?.other || ""}
+                        onChange={(e) =>
+                          setAnswers((p) => ({
+                            ...p,
+                            [qi]: { picks: p[qi]?.picks || new Set<string>(), other: e.target.value },
+                          }))
+                        }
+                      />
+                    </div>
                   </div>
-                </div>
-              ))}
-              <button onClick={submitAnswers} className="self-end bg-amber-400 text-slate-900 font-semibold rounded-xl px-5 py-2 text-sm hover:bg-amber-300">
-                Send answers
-              </button>
-            </div>
-          )}
+                ))}
+                <button onClick={submitAnswers} className="self-end bg-blue-600 text-white font-medium rounded-xl px-5 py-2 text-sm hover:bg-blue-700">
+                  Send
+                </button>
+              </div>
+            )}
 
-          {busy && (
-            <div className="self-start flex items-center gap-2 text-sm text-slate-400">
-              <span className="flex gap-1">
-                <span className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce" />
-                <span className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce [animation-delay:0.15s]" />
-                <span className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce [animation-delay:0.3s]" />
-              </span>
-              {status || "The mentor is thinking…"}
-            </div>
-          )}
-          {error && (
-            <div className="self-start text-sm text-red-300 bg-red-400/10 border border-red-400/30 rounded-xl px-4 py-2">
-              ⚠️ {error}
-            </div>
-          )}
-          <div ref={bottomRef} />
+            {busy && (
+              <div className="self-start flex items-center gap-2 text-sm text-gray-400 px-1">
+                <span className="flex gap-1">
+                  <span className="w-1.5 h-1.5 bg-gray-300 rounded-full animate-bounce" />
+                  <span className="w-1.5 h-1.5 bg-gray-300 rounded-full animate-bounce [animation-delay:0.15s]" />
+                  <span className="w-1.5 h-1.5 bg-gray-300 rounded-full animate-bounce [animation-delay:0.3s]" />
+                </span>
+                Thinking…
+              </div>
+            )}
+            {error && (
+              <div className="self-start text-sm text-red-600 bg-red-50 border border-red-200 rounded-xl px-4 py-2">
+                {error}
+              </div>
+            )}
+            <div ref={bottomRef} />
+          </div>
         </main>
 
-        {!showHero && (
-          <footer className="sticky bottom-0 py-3 bg-gradient-to-t from-slate-950 via-slate-950">
+        <footer className="px-4 py-3 border-t border-gray-100">
+          <div className="max-w-2xl mx-auto">
             <input
-              className="w-full bg-slate-900 border border-slate-700 rounded-2xl px-4 py-3 text-sm placeholder:text-slate-500 focus:border-slate-400 outline-none"
+              className="w-full bg-white border border-gray-300 rounded-2xl px-4 py-3 text-[15px] placeholder:text-gray-400 focus:border-gray-500 outline-none shadow-sm"
               placeholder={
                 askUser
-                  ? "Answer the questions above first…"
-                  : tracks.length === 0
-                  ? "Drop a track in, or ask anything…"
-                  : "Ask anything about your tracks — compare them, question a section, request an analysis…"
+                  ? "Answer above first…"
+                  : messages.length > 0
+                  ? "Ask a follow-up…"
+                  : 'Ask a question — e.g. "why does my chorus feel weak?"'
               }
               value={input}
               disabled={busy || !!askUser}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && input.trim() && send(input.trim(), [])}
             />
-          </footer>
-        )}
+          </div>
+        </footer>
       </div>
     </div>
   );
