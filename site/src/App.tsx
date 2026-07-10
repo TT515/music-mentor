@@ -129,17 +129,29 @@ export default function App() {
       return [{ upload_id: id, filename: decodeURIComponent(encName || id) }];
     });
     if (imported.length === 0) return;
+    const rawMeta = p.get("meta") || "";
     const s: Session = {
       ...newSession(),
       title: p.get("title") || "DAW session",
       tracks: imported,
-      meta: p.get("meta") || "",
+      meta: rawMeta.startsWith("mid:") ? "" : rawMeta,
     };
     setSessions((prev) => [s, ...prev]);
     setActiveId(s.id);
     setMessages([]);
     setTracks(imported);
     setMeta(s.meta || "");
+    // metadata uploaded separately by the DAW script? fetch it by id
+    if (rawMeta.startsWith("mid:")) {
+      fetch(`${WORKER}/get_meta`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ meta_id: rawMeta.slice(4) }),
+      })
+        .then((r) => r.json())
+        .then((j) => { if (j.meta) setMeta(j.meta); })
+        .catch(() => { /* metadata is optional */ });
+    }
     // clean the URL so a reload doesn't re-import
     window.history.replaceState({}, "", window.location.pathname);
     // eslint-disable-next-line react-hooks/exhaustive-deps

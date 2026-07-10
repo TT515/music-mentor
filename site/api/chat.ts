@@ -142,6 +142,24 @@ const tools: Anthropic.Tool[] = [
     },
   },
   {
+    name: "mix_tracks",
+    description:
+      "Sum multiple uploaded tracks or stems into ONE new temporary track (sample-aligned, auto-scaled to avoid clipping). Returns a new upload_id usable by every analysis tool. Use when a question concerns a COMBINATION: the full mix from DAW stems, the rhythm section (drums+bass), all vocals together, etc. IMPORTANT: when DAW session metadata provides fader volume_db values, pass them as gains_db (parallel to upload_ids) to reconstruct the user's actual mix balance; muted tracks should be omitted. Without gains_db the sum is equal-gain and does NOT reflect the project's fader mix — say so when interpreting loudness.",
+    input_schema: {
+      type: "object",
+      properties: {
+        upload_ids: { type: "array", items: { type: "string" } },
+        gains_db: {
+          type: "array",
+          items: { type: "number" },
+          description: "per-track gain in dB, parallel to upload_ids (use DAW fader values from session metadata)",
+        },
+        name: { type: "string", description: "short label, e.g. 'rhythm section'" },
+      },
+      required: ["upload_ids"],
+    },
+  },
+  {
     name: "get_job",
     description: "Poll an async job by job_id. Use only when the client tells you a job finished, or once after starting a job to confirm it is running.",
     input_schema: {
@@ -206,6 +224,8 @@ async function execTool(name: string, input: any): Promise<unknown> {
       return callModal("/separate", input);
     case "section_features":
       return callModal("/section_features", input);
+    case "mix_tracks":
+      return callModal("/mix", input);
     case "get_job":
       return callModal("/job", input);
     default:

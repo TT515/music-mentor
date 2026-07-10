@@ -124,10 +124,61 @@ if uploaded == 0 then
   return
 end
 
--- ---------------------------------------------------------------- 4. open the mentor
+-- ---------------------------------------------------------------- 3b. render + upload the master mix
+-- The stems tell the mentor about parts; the master mix tells it about the
+-- whole (including master-bus processing). Render it in a second pass.
+msg("Rendering master mix…")
+reaper.GetSetProjectInfo(0, "RENDER_SETTINGS", 0, true) -- master mix
+reaper.GetSetProjectInfo_String(0, "RENDER_PATTERN", "MUSICMENTOR_MASTER", true)
+reaper.Main_OnCommand(42230, 0)
+local master_path = render_dir .. "/MUSICMENTOR_MASTER.wav"
+local mf = io.open(master_path, "rb")
+if mf then
+  mf:close()
+  msg("Uploading: Full Mix (master)")
+  local cmd = "curl -s -X POST " .. shellquote(WORKER .. "/upload") ..
+              " -F " .. shellquote("file=@" .. master_path)
+  local p = io.popen(cmd)
+  local out = p and p:read("*a") or ""
+  if p then p:close() end
+  local id = out:match('"upload_id"%s*:%s*"(%w+)"')
+  if id then
+    table.insert(roster, 1, id .. "~" .. urlencode("Full Mix (master).wav"))
+    uploaded = uploaded + 1
+  else
+    msg("  ! master mix upload failed → " .. out:sub(1, 120))
+  end
+else
+  msg("  ! master mix render not found (skipped)")
+end
+
+-- ---------------------------------------------------------------- 4. upload metadata separately (no URL-length limit)
+local meta_param = ""
+do
+  local mpath = render_dir .. "/session_meta.json"
+  local mf2 = io.open(mpath, "w")
+  if mf2 then
+    -- wrap as {"meta": "<json-as-string>"} for the /save_meta endpoint
+    mf2:write('{"meta": ' .. string.format("%q", meta_json):gsub("\\\n", "\\n") .. "}")
+    mf2:close()
+    local cmd = "curl -s -X POST " .. shellquote(WORKER .. "/save_meta") ..
+                " -H 'content-type: application/json' --data-binary @" .. shellquote(mpath)
+    local p = io.popen(cmd)
+    local out = p and p:read("*a") or ""
+    if p then p:close() end
+    local mid = out:match('"meta_id"%s*:%s*"(%w+)"')
+    if mid then
+      meta_param = "&meta=" .. urlencode("mid:" .. mid)
+      msg("Session metadata uploaded (faders, pans, mutes).")
+    else
+      msg("  ! metadata upload failed (continuing without it)")
+    end
+  end
+end
+
+-- ---------------------------------------------------------------- 5. open the mentor
 local url = SITE .. "/?tracks=" .. table.concat(roster, ",") ..
-            "&title=" .. urlencode("REAPER: " .. proj_name) ..
-            "&meta=" .. urlencode(meta_json)
+            "&title=" .. urlencode("REAPER: " .. proj_name) .. meta_param
 msg("Done: " .. uploaded .. " uploaded, " .. failed .. " failed.")
 msg("Opening Music Mentor…")
 open_url(url)

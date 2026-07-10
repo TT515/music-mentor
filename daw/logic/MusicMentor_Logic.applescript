@@ -47,7 +47,7 @@ on run
 	end if
 
 	-- 3. the one manual step: Logic's export sheet
-	display dialog "Logic's export sheet is open." & return & return & "1) Set the save folder to  MusicMentorDrop  (in your home folder) — Logic will remember it" & return & "2) Format: WAV" & return & "3) Click Export" & return & return & "Click Continue AFTER clicking Export in Logic." buttons {"Cancel", "Continue"} default button "Continue"
+	display dialog "Logic's export sheet is open." & return & return & "1) Set the save folder to  MusicMentorDrop  (in your home folder) — Logic will remember it" & return & "2) Format: WAV" & return & "3) TICK 'Include Volume/Pan Automation' — Logic has no API to report fader values, so baking them into the stems is the only way the mentor can hear your actual mix balance" & return & "4) Click Export" & return & return & "Click Continue AFTER clicking Export in Logic." buttons {"Cancel", "Continue"} default button "Continue"
 
 	-- 4. wait until exported files exist and stop changing
 	set lastSig to "start"

@@ -116,6 +116,30 @@ def api_app():
         return {"job_id": job_id, "status": "running",
                 "note": "allin1 on GPU, typically 1-3 min. Poll /job."}
 
+    @api.post("/mix")
+    async def do_mix(body: dict):
+        return mix_tracks.remote(body["upload_ids"], body.get("name", "mix"),
+                                 body.get("gains_db"))
+
+    @api.post("/save_meta")
+    async def do_save_meta(body: dict):
+        import os
+        mid = uuid.uuid4().hex[:12]
+        os.makedirs(f"{DATA}/meta", exist_ok=True)
+        with open(f"{DATA}/meta/{mid}.json", "w") as f:
+            f.write(body.get("meta", ""))
+        volume.commit()
+        return {"meta_id": mid}
+
+    @api.post("/get_meta")
+    async def do_get_meta(body: dict):
+        volume.reload()
+        try:
+            with open(f"{DATA}/meta/{body['meta_id']}.json") as f:
+                return {"meta": f.read()}
+        except FileNotFoundError:
+            return {"error": "unknown meta_id"}
+
     @api.post("/job")
     async def do_job(body: dict):
         return jobs.get(body["job_id"], {"status": "unknown"})
@@ -211,6 +235,66 @@ def section_features(upload_id: str, segments: list) -> list:
                     "envelope_flatness": round(flat, 3) if flat else None,
                     "bands_rel_db": band_db})
     return out
+
+
+@app.function(image=cpu_image, volumes={DATA: volume}, timeout=600)
+def mix_tracks(upload_ids: list, name: str, gains_db: list = None) -> dict:
+    """Sum several uploads/stems into one temporary track (sample-aligned,
+    peak-limited). gains_db: optional per-track dB gains, parallel to
+    upload_ids — pass DAW fader values to reconstruct the project mix.
+    Returns a new upload_id usable everywhere."""
+    import glob
+    import uuid as _uuid
+    import numpy as np
+    import librosa
+    import soundfile as sf
+
+    volume.reload()
+
+    def resolve(uid: str) -> str:
+        if uid.startswith("stems/"):
+            return f"{DATA}/{uid}.wav"
+        return glob.glob(f"{DATA}/{uid}.*")[0]
+
+    sr0 = None
+    total = None
+    for idx, uid in enumerate(upload_ids):
+        y, sr = librosa.load(resolve(uid), sr=sr0, mono=False)
+        if y.ndim == 1:
+            y = np.stack([y, y])
+        if gains_db and idx < len(gains_db) and gains_db[idx] is not None:
+            y = y * (10.0 ** (float(gains_db[idx]) / 20.0))
+        if sr0 is None:
+            sr0 = sr
+        if total is None:
+            total = y.astype(np.float64)
+        else:
+            n = max(total.shape[1], y.shape[1])
+            if total.shape[1] < n:
+                total = np.pad(total, ((0, 0), (0, n - total.shape[1])))
+            if y.shape[1] < n:
+                y = np.pad(y, ((0, 0), (0, n - y.shape[1])))
+            total += y
+
+    peak = float(np.abs(total).max()) or 1.0
+    scaled = peak > 0.99
+    if scaled:
+        total *= 0.95 / peak
+    new_id = _uuid.uuid4().hex[:12]
+    sf.write(f"{DATA}/{new_id}.wav", total.T.astype(np.float32), sr0)
+    volume.commit()
+    return {
+        "upload_id": new_id,
+        "mixed_from": upload_ids,
+        "gains_db_applied": gains_db or "none (equal gain)",
+        "sample_rate": sr0,
+        "peak_normalized": scaled,
+        "note": ("Gain-weighted sum" if gains_db else "Equal-gain sum") +
+                (", scaled down to avoid clipping" if scaled else "") +
+                (". Fader gains applied — approximates the project mix (minus master-bus FX)."
+                 if gains_db else
+                 ". Raw stem levels — NOT the project's fader mix."),
+    }
 
 
 # ---------------------------------------------------------------- async GPU tools

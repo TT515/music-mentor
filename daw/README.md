@@ -70,6 +70,28 @@ Track names come from Logic's exported filenames either way.
    to an empty folder.
 2. Same `mentor-send.sh` command as Logic.
 
+## In-DAW chat interface
+
+- **REAPER**: `reaper/MusicMentor_Chat.lua` — a native dockable chat panel
+  inside REAPER (requires the free **ReaImGui** extension via ReaPack).
+  One button sends stems + master mix + fader/pan/mute metadata; then chat,
+  answer intent questions, and pull background-job results without leaving
+  the DAW. The mentor can reconstruct your fader mix on demand (`mix_tracks`
+  with fader gains) or analyze any subset of tracks together.
+  Beta caveats: the panel freezes for a few seconds while the mentor thinks
+  (synchronous HTTP), and long analyses need a "Check jobs" click.
+- **Logic Pro**: impossible. Logic has no extension/panel API of any kind —
+  nothing can render UI inside it. The AppleScript app + web app is the
+  ceiling. Fader data is also unobtainable via API; the workaround is
+  ticking "Include Volume/Pan Automation" at export so the stems themselves
+  carry your mix.
+- **FL Studio**: an in-FL interface would require building a compiled
+  webview VST plugin (JUCE/C++, per-platform builds + signing) — a real
+  but separate engineering project, not a script. Until then: export with
+  "Split mixer tracks" + `mentor-send.sh`, chat in the browser. FL exposes
+  no API for fader values either; FL's export bakes mixer levels into
+  stems by default, which serves the same purpose.
+
 ## Limitations (honest list)
 
 - Logic/FL: fader/pan/mute metadata is NOT captured (their exports don't
