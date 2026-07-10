@@ -34,18 +34,35 @@ Notes:
 
 ## Logic Pro
 
-1. In your project: **File → Export → All Tracks as Audio Files…**
-   (choose WAV, no normalization, into an empty folder).
-2. In Terminal:
+**Option A — the app (near-one-click).** `logic/MusicMentor_Logic.applescript`
+automates everything except Logic's own export sheet (macOS forbids filling
+that in safely). Install once in Terminal:
 
 ```bash
-cd path/to/music-mentor-web/daw/logic-fl
-chmod +x mentor-send.sh        # first time only
-./mentor-send.sh ~/Desktop/MyStems "炽热 v3 session"
+chmod +x ~/music-mentor-web/daw/logic-fl/mentor-send.sh
+mkdir -p ~/Applications
+osacompile -o "$HOME/Applications/MusicMentor for Logic.app" \
+  ~/music-mentor-web/daw/logic/MusicMentor_Logic.applescript
 ```
 
-It uploads every audio file in the folder and opens the mentor with all
-stems loaded. Track names come from Logic's exported filenames.
+First run: macOS asks for Accessibility permission (System Settings →
+Privacy & Security → Accessibility → enable "MusicMentor for Logic") and to
+allow controlling Logic Pro. Then the flow is: open your project → run the
+app → Logic's export sheet appears → pick `MusicMentorDrop` + click Export
+(Logic remembers the folder, so subsequent runs are one click) → the app
+waits for the render, uploads all stems, and opens the mentor.
+
+Tip: in Logic's export sheet, untick "Include Volume/Pan Automation" if you
+want raw stems, or leave it on if you want the mentor to hear your mix moves.
+
+**Option B — plain command.** Export manually (File → Export → All Tracks as
+Audio Files… into any folder), then:
+
+```bash
+~/music-mentor-web/daw/logic-fl/mentor-send.sh ~/Desktop/MyStems "炽热 v3 session"
+```
+
+Track names come from Logic's exported filenames either way.
 
 ## FL Studio
 
