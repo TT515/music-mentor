@@ -23,7 +23,7 @@ local WORKER = "https://tt515--music-mentor-worker-api-app.modal.run"
 
 -- ================================================================ guards
 if not reaper.ImGui_CreateContext then
-  reaper.MB("This panel needs the ReaImGui extension.\n\nInstall: Extensions → ReaPack → Browse packages → search \"ReaImGui\" → install, then restart REAPER.\n\n(No ReaPack? Get it at reapack.com)", "Music Mentor", 0)
+  reaper.MB("This panel needs the ReaImGui extension (\"Rea-Im-Gui\", capital i).\n\nStep 1 - ReaPack (package manager): download the .dylib for your chip from reapack.com, put it in REAPER's resource path -> UserPlugins folder (Options -> Show REAPER resource path), restart REAPER.\n\nStep 2 - Extensions -> ReaPack -> Browse packages -> search \"imgui\" -> install \"ReaImGui: ReaScript binding for Dear ImGui\" -> Apply -> restart REAPER.", "Music Mentor", 0)
   return
 end
 if reaper.GetOS():match("^Win") then
@@ -327,6 +327,28 @@ local function frame()
     else
       if reaper.ImGui_Button(ctx, #roster == 0 and "Send session to mentor" or "Re-send session") then
         collect_session()
+      end
+      reaper.ImGui_SameLine(ctx)
+      if reaper.ImGui_Button(ctx, "Add reference…") then
+        local ok, fn = reaper.GetUserFileNameForRead("", "Choose a reference audio file", "")
+        if ok and fn and fn ~= "" then
+          local name = fn:match("([^/\\]+)$") or fn
+          local ext = name:lower():match("%.([a-z0-9]+)$") or ""
+          local allowed = { wav=true, mp3=true, aif=true, aiff=true, flac=true, m4a=true, ogg=true }
+          if not allowed[ext] then
+            push("err", '"' .. name .. '" is not a supported format (wav/mp3/aiff/flac/m4a/ogg).')
+          else
+            status = "Uploading reference: " .. name
+            local id = http_upload(fn)
+            status = ""
+            if id then
+              roster[#roster + 1] = { upload_id = id, filename = "REF - " .. name }
+              push("tool", "Reference added: " .. name .. " — ask the mentor to compare against it.")
+            else
+              push("err", "Reference upload failed (network?). Try again.")
+            end
+          end
+        end
       end
       local n_jobs = 0
       for _ in pairs(pending_jobs) do n_jobs = n_jobs + 1 end
