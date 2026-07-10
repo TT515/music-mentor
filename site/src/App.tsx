@@ -492,6 +492,7 @@ export default function App() {
           <button className="md:hidden text-gray-500" onClick={() => setSidebarOpen(true)}>☰</button>
           <h1 className="text-base font-semibold tracking-tight">Music Mentor</h1>
           <span className="text-xs text-gray-400 hidden sm:inline">measure → ask intent → advise</span>
+          <a href="/plugins.html" className="ml-auto text-xs text-gray-400 hover:text-gray-600">DAW plugins</a>
         </header>
 
         <main className="flex-1 overflow-y-auto px-4 py-4">

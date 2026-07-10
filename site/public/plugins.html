@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Music Mentor — DAW Plugins</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-white text-gray-900">
+  <div class="max-w-3xl mx-auto px-4 py-10">
+    <header class="mb-10">
+      <a href="/" class="text-sm text-gray-400 hover:text-gray-600">← Music Mentor</a>
+      <h1 class="text-3xl font-semibold tracking-tight mt-2">DAW Plugins</h1>
+      <p class="text-gray-500 mt-2">Send your session — stems, master mix, fader data — straight to the mentor.</p>
+    </header>
+
+    <!-- REAPER -->
+    <section class="mb-10 border border-gray-200 rounded-2xl p-6">
+      <div class="flex items-baseline justify-between flex-wrap gap-2">
+        <h2 class="text-xl font-semibold">REAPER</h2>
+        <span class="text-xs bg-green-100 text-green-800 rounded-full px-3 py-1">Full integration — chat inside the DAW</span>
+      </div>
+      <p class="text-sm text-gray-600 mt-3">
+        A native chat panel inside REAPER. One button renders every track, uploads stems + master mix +
+        fader/pan/mute metadata, then you chat with the mentor without leaving the DAW.
+        Add reference tracks from disk to compare against.
+      </p>
+      <div class="flex flex-wrap gap-3 mt-4">
+        <a href="/downloads/MusicMentor_Chat.lua" download
+           class="bg-blue-600 text-white text-sm font-medium rounded-xl px-4 py-2 hover:bg-blue-700">
+          ⬇ MusicMentor_Chat.lua — chat panel</a>
+        <a href="/downloads/MusicMentor_SendSession.lua" download
+           class="border border-gray-300 text-sm font-medium rounded-xl px-4 py-2 hover:bg-gray-50">
+          ⬇ MusicMentor_SendSession.lua — send to web app</a>
+      </div>
+      <details class="mt-4 text-sm text-gray-600">
+        <summary class="cursor-pointer font-medium text-gray-800">Install instructions</summary>
+        <ol class="list-decimal ml-5 mt-2 space-y-1">
+          <li>Chat panel only: install <b>ReaPack</b> (reapack.com — put the .dylib/.dll for your platform in REAPER's resource path → UserPlugins, restart), then Extensions → ReaPack → Browse packages → search <b>imgui</b> → install <b>ReaImGui</b> → Apply → restart.</li>
+          <li>REAPER → Actions → Show action list → New action → <b>Load ReaScript…</b> → pick the downloaded .lua file.</li>
+          <li>Run it (assign a keyboard shortcut for one-keystroke access). macOS/Linux; Windows users: use SendSession + the web app.</li>
+        </ol>
+      </details>
+    </section>
+
+    <!-- Logic Pro -->
+    <section class="mb-10 border border-gray-200 rounded-2xl p-6">
+      <div class="flex items-baseline justify-between flex-wrap gap-2">
+        <h2 class="text-xl font-semibold">Logic Pro</h2>
+        <span class="text-xs bg-amber-100 text-amber-800 rounded-full px-3 py-1">Semi-automatic — one click in Logic's export sheet</span>
+      </div>
+      <p class="text-sm text-gray-600 mt-3">
+        Logic has no plugin/scripting API for session access, so this helper app automates everything
+        <em>around</em> Logic's own export sheet: it opens the export menu for you, waits for the render,
+        uploads all stems, and opens the mentor. Tick “Include Volume/Pan Automation” at export so the
+        stems carry your mix balance.
+      </p>
+      <div class="flex flex-wrap gap-3 mt-4">
+        <a href="/downloads/MusicMentor_Logic.applescript" download
+           class="bg-blue-600 text-white text-sm font-medium rounded-xl px-4 py-2 hover:bg-blue-700">
+          ⬇ MusicMentor_Logic.applescript</a>
+        <a href="/downloads/mentor-send.sh" download
+           class="border border-gray-300 text-sm font-medium rounded-xl px-4 py-2 hover:bg-gray-50">
+          ⬇ mentor-send.sh — uploader (required)</a>
+      </div>
+      <details class="mt-4 text-sm text-gray-600">
+        <summary class="cursor-pointer font-medium text-gray-800">Install instructions</summary>
+        <ol class="list-decimal ml-5 mt-2 space-y-1">
+          <li>Save both files. In Terminal: <code class="bg-gray-100 rounded px-1">chmod +x mentor-send.sh</code>, and if needed edit the <code class="bg-gray-100 rounded px-1">uploaderPath</code> at the top of the AppleScript to point at it.</li>
+          <li>Compile the app: <code class="bg-gray-100 rounded px-1">osacompile -o "$HOME/Applications/MusicMentor for Logic.app" MusicMentor_Logic.applescript</code></li>
+          <li>First run: allow it under System Settings → Privacy &amp; Security → <b>Accessibility</b>, and permit control of Logic Pro.</li>
+          <li>Flow: open project → run app → pick <b>MusicMentorDrop</b> folder + Export in Logic's sheet (remembered next time) → stems upload → mentor opens.</li>
+        </ol>
+      </details>
+    </section>
+
+    <!-- FL Studio -->
+    <section class="mb-10 border border-gray-200 rounded-2xl p-6">
+      <div class="flex items-baseline justify-between flex-wrap gap-2">
+        <h2 class="text-xl font-semibold">FL Studio</h2>
+        <span class="text-xs bg-amber-100 text-amber-800 rounded-full px-3 py-1">Export + one command</span>
+      </div>
+      <p class="text-sm text-gray-600 mt-3">
+        FL exposes no session API, so the flow is: export split mixer tracks, then run the uploader.
+        FL bakes mixer levels into stems by default, so the mentor hears your actual balance.
+      </p>
+      <div class="flex flex-wrap gap-3 mt-4">
+        <a href="/downloads/mentor-send.sh" download
+           class="bg-blue-600 text-white text-sm font-medium rounded-xl px-4 py-2 hover:bg-blue-700">
+          ⬇ mentor-send.sh</a>
+      </div>
+      <details class="mt-4 text-sm text-gray-600">
+        <summary class="cursor-pointer font-medium text-gray-800">Install instructions</summary>
+        <ol class="list-decimal ml-5 mt-2 space-y-1">
+          <li>FL Studio: File → Export → Wave file… → tick <b>Split mixer tracks</b> → export to an empty folder.</li>
+          <li>Terminal: <code class="bg-gray-100 rounded px-1">chmod +x mentor-send.sh</code> (first time), then <code class="bg-gray-100 rounded px-1">./mentor-send.sh /path/to/stems "My session"</code>.</li>
+          <li>The mentor opens in your browser with every stem loaded.</li>
+        </ol>
+      </details>
+    </section>
+
+    <footer class="text-xs text-gray-400 space-y-1">
+      <p>All plugins are open source — <a class="underline hover:text-gray-600" href="https://github.com/TT515/music-mentor">github.com/TT515/music-mentor</a>.</p>
+      <p>Why no “real” VST/AU plugin? Plugin formats are sandboxed to a single track's audio and cannot see your session — session-level integration requires each DAW's own scripting surface, which is exactly what these use.</p>
+    </footer>
+  </div>
+</body>
+</html>
