@@ -238,6 +238,12 @@ export default async function handler(req: any, res: any) {
             .join("\n")}\nRefer to tracks by filename when talking to the user; use upload_id when calling tools.`
         : "\n\n(No tracks uploaded yet — the user can drop audio files into the chat at any time.)";
 
+    // optional DAW session metadata (track names, fader levels, pan, mutes)
+    const meta = typeof body?.meta === "string" && body.meta.length < 20000 ? body.meta : "";
+    const metaContext = meta
+      ? `\n\n## DAW session metadata (exported from the user's project — fader/pan/mute state at export time)\n${meta}\nUse this to connect stems to the user's actual session: refer to tracks by their DAW names, and factor fader/mute state into loudness interpretation (a quiet stem may just have a low fader).`
+      : "";
+
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
     // ---- history repair: every assistant tool_use must be followed by a
@@ -280,7 +286,7 @@ export default async function handler(req: any, res: any) {
       const resp = await client.messages.create({
         model: MODEL,
         max_tokens: 4096,
-        system: SYSTEM_PROMPT + trackContext,
+        system: SYSTEM_PROMPT + trackContext + metaContext,
         tools,
         messages: history,
       });

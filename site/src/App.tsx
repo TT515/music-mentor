@@ -8,7 +8,7 @@ type ContentBlock =
 type Msg = { role: "user" | "assistant"; content: string | ContentBlock[] };
 
 type Track = { upload_id: string; filename: string; url?: string };
-type Session = { id: string; title: string; createdAt: number; messages: Msg[]; tracks: Track[] };
+type Session = { id: string; title: string; createdAt: number; messages: Msg[]; tracks: Track[]; meta?: string };
 
 type AskUser = {
   toolUseId: string;
@@ -114,6 +114,36 @@ export default function App() {
   messagesRef.current = messages;
   const tracksRef = useRef<Track[]>([]);
   tracksRef.current = tracks;
+  const [meta, setMeta] = useState<string>(() => sessions[0]?.meta || "");
+  const metaRef = useRef<string>("");
+  metaRef.current = meta;
+
+  // ---------- DAW session import via URL (?tracks=id~name,…&title=…&meta=…) ----------
+  useEffect(() => {
+    const p = new URLSearchParams(window.location.search);
+    const t = p.get("tracks");
+    if (!t) return;
+    const imported: Track[] = t.split(",").flatMap((pair) => {
+      const [id, encName] = pair.split("~");
+      if (!id) return [];
+      return [{ upload_id: id, filename: decodeURIComponent(encName || id) }];
+    });
+    if (imported.length === 0) return;
+    const s: Session = {
+      ...newSession(),
+      title: p.get("title") || "DAW session",
+      tracks: imported,
+      meta: p.get("meta") || "",
+    };
+    setSessions((prev) => [s, ...prev]);
+    setActiveId(s.id);
+    setMessages([]);
+    setTracks(imported);
+    setMeta(s.meta || "");
+    // clean the URL so a reload doesn't re-import
+    window.history.replaceState({}, "", window.location.pathname);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ---------- session persistence ----------
   useEffect(() => {
@@ -124,6 +154,7 @@ export default function App() {
               ...s,
               messages,
               tracks: tracks.map(({ upload_id, filename }) => ({ upload_id, filename })),
+              meta,
               title:
                 s.title === "New chat"
                   ? (() => {
@@ -160,6 +191,7 @@ export default function App() {
     setActiveId(id);
     setMessages(s.messages);
     setTracks(s.tracks);
+    setMeta(s.meta || "");
     setSidebarOpen(false);
   }
 
@@ -170,6 +202,7 @@ export default function App() {
     setActiveId(s.id);
     setMessages([]);
     setTracks([]);
+    setMeta("");
     setSidebarOpen(false);
   }
 
@@ -300,6 +333,7 @@ export default function App() {
         body: JSON.stringify({
           messages: outbound,
           tracks: tracksRef.current.map(({ upload_id, filename }) => ({ upload_id, filename })),
+          meta: metaRef.current || undefined,
         }),
       });
       if (!r.ok) {
